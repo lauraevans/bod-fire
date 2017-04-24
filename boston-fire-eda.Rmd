@@ -1,0 +1,213 @@
+---
+title: "boston fire eda"
+author: "Laura Evans"
+date: "April 8, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(ggplot2)
+library(lubridate)
+library(ggmap)
+library(plyr)
+```
+
+
+
+```{r}
+
+
+data.raw <- read_excel('february.2017-fireincidents.xlsx')
+str(data.raw)
+data.df <- data.raw
+colnames(data.df) <- gsub('\\s', '.', colnames(data.df))
+
+
+table(is.na(data.df$Street.Number))
+table(is.na(data.df$xStreet.Name))
+# so for these 375 you'll need to do address via cross street
+
+table(data.df$Incident.Description)
+
+ggplot(data.df, aes(x=Incident.Description)) + geom_bar() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+# worth rolling up or dropping some of these?
+# or doing a deep dive into the most interesting/common?
+
+data.df$Alarm.Date <- dmy(data.df$Alarm.Date)
+data.df$day <- wday(data.df$Alarm.Date, label=TRUE)
+
+ggplot(data.df, aes(x=day)) + geom_bar()
+# norm for number of days in month? (but it's feb, so you don't need to)
+
+data.df$hour <- hour(as.POSIXct( data.df$Alarm.Time, format='%H:%M:%S'))
+
+ggplot(data.df, aes(x=hour)) + geom_bar()
+# find types where the distro differs? small multiples?
+
+ggplot(data.df, aes(x=Property.Description)) + geom_bar() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+# TODO: drop some of the small ones here
+
+
+data.df$full_street <- tolower(paste(data.df$Street.Name, data.df$Street.Type))
+
+sam <- read.csv('Live_Street_Address_Management_SAM_Addresses.csv')
+sam$FULL_STREET_NAME <- tolower(sam$FULL_STREET_NAME)
+
+tmp1 <- sam[146057, ]
+tmp2 <- data.df[1, c('Street.Number', 'full_street')]
+
+# still getting doubles.... i think it's bc of dupes in the x/y in SAME
+fire.locs <- merge(data.df, unique(sam[ ,c('X' ,'Y', 'STREET_NUMBER', 'FULL_STREET_NAME')]),
+                                   by.x=c('Street.Number', 'full_street'), 
+                   by.y=c('STREET_NUMBER', 'FULL_STREET_NAME'))
+
+# so now we're short a few .... is it the ones with xstreets?
+fire.locs <- ddply(fire.locs, colnames(fire.locs)[1:27], head, 1)
+
+fire.locs <- ddply(fire.locs, c('Incident.Description'), mutate, descr.count=length(X) )
+
+# fine tune this
+
+map <- get_map(location = c(min(fire.locs$X), min(fire.locs$Y), 
+                            max(fire.locs$X), max(fire.locs$Y)))
+
+
+#map <- get_map(location = c(mean(fire.locs$X), mean(fire.locs$Y)), zoom = 12)
+
+ggmap(map)
+
+ggmap(map) + geom_point(data=fire.locs, aes(x=X, y=Y))
+
+table(fire.locs$Incident.Description)
+
+ggmap(map) + geom_point(data=fire.locs[fire.locs$descr.count>70, ],
+                        aes(x=X, y=Y, color=Incident.Description))
+
+
+
+incident.counts <- ddply(data.df, c('Incident.Description'), summarise, count=length(hour))
+
+
+
+# unique this down somehow - sum the values and areas?
+buildings <- read.csv('property-assessment-fy2017.csv')
+buildings <- buildings[, c('PID', 'ST_NUM', 'ST_NAME', 'ST_NAME_SUF', 'UNIT_NUM', 
+                         'LU', 'OWN_OCC', 'AV_LAND', 'AV_BLDG', 'YR_BUILT', 
+                         'YR_REMOD', 'GROSS_AREA', 'LIVING_AREA', 'STRUCTURE_CLASS', 
+                         'R_OVRALL_CND')]
+
+buildings.small <- ddply(buildings, c('ST_NUM', 'ST_NAME', 'ST_NAME_SUF',
+                         'LU', 'YR_BUILT', 'YR_REMOD', 'STRUCTURE_CLASS', 
+                         'R_OVRALL_CND'), summarise, AV_LAND = sum(as.numeric(AV_LAND)),
+                         AV_BLDG = sum(as.numeric(AV_BLDG)), GROSS_AREA=sum(GROSS_AREA),
+                         LIVING_AREA=sum(LIVING_AREA))
+
+buildings$full_street <- tolower(paste(buildings$ST_NAME, buildings$ST_NAME_SUF)) 
+buildings$Street.Number <- gsub('\\s', '\\-', buildings$ST_NUM)
+
+buildings.fires <- merge(buildings, data.df, by.x=c('Street.Number', 'full_street'),
+                         by.y=c('Street.Number', 'full_street'), all.x =TRUE)
+
+length(unique(buildings.fires$Incident.Number))
+
+head(data.df$Incident.Number %in% unique(buildings.fires$Incident.Number), n=20)
+
+# where did the rest of my fires go?
+# a lot of these fires are at addresses not in the assessment database and i don't know why
+# lots of blanks in the st_num part of the assessment database
+#otoh, are we duplicating a lot? - yes. fires in a multi-unit building get reported all of the units
+
+table(buildings.fires$Incident.Number)
+
+buildings.fires$fire <- ifelse(is.na(buildings.fires$Incident.Number), FALSE, TRUE)
+
+ggplot(buildings.fires, aes(x=LU, fill=fire)) + geom_bar()
+
+
+
+
+buildings.small$full_street <- tolower(paste(buildings.small$ST_NAME,
+                                             buildings.small$ST_NAME_SUF)) 
+buildings.small$Street.Number <- gsub('\\s', '\\-', buildings.small$ST_NUM)
+
+buildings.fires.small <- merge(buildings.small, data.df, by.x=c('Street.Number', 'full_street'),
+                         by.y=c('Street.Number', 'full_street'), all.x =TRUE)
+
+length(unique(buildings.fires.small$Incident.Number))
+
+table(buildings.fires.small$Incident.Number)
+
+# still have a bunch of multiples that shoudl get cleaned out
+
+buildings.fires.small$fire <- ifelse(is.na(buildings.fires.small$Incident.Number), 0, 1)
+
+building.type.fire <- ddply(buildings.fires.small, c('LU'), summarise, count=length(full_street),
+                            fires=sum(fire))
+building.type.fire$perc <- building.type.fire$fires / building.type.fire$count
+
+ggplot(building.type.fire, aes(x=LU, y=perc)) + geom_bar(stat='identity')
+
+buildings.fires.small$decade <- 10 * round(buildings.fires.small$YR_BUILT / 10)
+
+building.decade.fire <- ddply(buildings.fires.small, c('decade'), summarise,
+                              count=length(full_street),
+                            fires=sum(fire))
+building.decade.fire$perc <- building.decade.fire$fires / building.decade.fire$count
+
+ggplot(building.decade.fire[building.decade.fire$decade!=0, ], 
+       aes(x=decade, y=perc)) + geom_bar(stat='identity')
+
+
+building.class.fire <- ddply(buildings.fires.small, c('STRUCTURE_CLASS'), summarise,
+                              count=length(full_street),
+                            fires=sum(fire))
+building.class.fire$perc <- building.class.fire$fires / building.class.fire$count
+
+ggplot(building.class.fire, 
+       aes(x=STRUCTURE_CLASS, y=perc)) + geom_bar(stat='identity')
+
+
+building.cnd.fire <- ddply(buildings.fires.small, c('R_OVRALL_CND'), summarise,
+                              count=length(full_street),
+                            fires=sum(fire))
+building.cnd.fire$perc <- building.cnd.fire$fires / building.cnd.fire$count
+
+ggplot(building.cnd.fire, 
+       aes(x=R_OVRALL_CND, y=perc)) + geom_bar(stat='identity')
+
+
+
+
+# todo
+
+# viz by type of building (can we compare to types of buildings in the city?)
+# small multiples?
+# code all the incident types as fires/not fires AND REDO IT ALL
+
+# get property type/age/size/value details and compare fire risk
+# to compare:
+# size
+# value
+# if residential - owner occupied
+# should probably do all these plots as raw counts too
+
+# use code enforcement data somehow
+
+code.df <- read.csv('cepviolations.csv')
+code.df <- code.df[ ,c('Status_DTTM', 'Description', 'StNo', 'StHigh', 'Street', 'Suffix')]
+
+code.df$date <- ymd(gsub('\\s.*', '', code.df$Status_DTTM))
+
+code.df <- code.df[code.df$date < ymd('2017-03-01') & code.df$date >= ymd('2016-11-01'), ]
+
+
+table(as.character(code.df$Description))
+
+# we have baseline fire numbers
+# do properties with any of these violations have higher/lower rates of fire?
+
+```
