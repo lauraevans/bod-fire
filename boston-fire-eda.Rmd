@@ -2,7 +2,7 @@
 title: "boston fire eda"
 author: "Laura Evans"
 date: "April 8, 2017"
-output: html_document
+output: md_document
 ---
 
 ```{r setup, include=FALSE}
@@ -16,7 +16,7 @@ library(plyr)
 
 
 
-```{r}
+```{r, echo=FALSE, warning = FALSE}
 
 
 data.raw <- read_excel('february.2017-fireincidents.xlsx')
