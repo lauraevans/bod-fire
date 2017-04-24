@@ -15,26 +15,73 @@ library(plyr)
 ```
 
 
-
+### kinds of incidents
 ```{r, echo=FALSE, warning = FALSE}
 
 
 data.raw <- read_excel('february.2017-fireincidents.xlsx')
-str(data.raw)
+#str(data.raw)
 data.df <- data.raw
 colnames(data.df) <- gsub('\\s', '.', colnames(data.df))
 
 
-table(is.na(data.df$Street.Number))
-table(is.na(data.df$xStreet.Name))
+#table(is.na(data.df$Street.Number))
+#table(is.na(data.df$xStreet.Name))
 # so for these 375 you'll need to do address via cross street
 
 table(data.df$Incident.Description)
 
-ggplot(data.df, aes(x=Incident.Description)) + geom_bar() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+#ggplot(data.df, aes(x=Incident.Description)) + geom_bar() +
+#  theme(axis.text.x = element_text(angle = 90, hjust = 1))
 # worth rolling up or dropping some of these?
 # or doing a deep dive into the most interesting/common?
+
+data.df <- data.df[data.df$Incident.Description %in% c('Arcing, shorted electrical equipment',
+                                                      'Attempt to burn',
+                                                      'Biological hazard investigation',
+                                          'Biological hazard, confirmed or suspected',
+                                                      'Brush or brush-and-grass mixture fire',
+                                                      'Building fire',
+                                                      'Carbon monoxide incident',
+                                                      'Chemical spill or leak',
+                                         'Combustible/flammable gas/liquid condition, other',
+                                                      'Cooking fire, confined to container',
+                                    'Dumpster or other outside trash receptacle fire',
+                                          'Electrical  wiring/equipment problem, Other',
+                                                      'Fire, Other',
+                                      'Fuel burner/boiler malfunction, fire confined',
+                                                    'Gas leak (natural gas or LPG)',
+                                    'Gasoline or other flammable liquid spill',
+                                                    'Hazardous condition, Other',
+                                    'Heat from short circuit (wiring), defective/worn',
+                                                    'Mobile property (vehicle) fire, Other',
+                                                    'Natural vegetation fire, Other',
+                                                    'Oil or other combustible liquid spill',
+                                                    'Outside equipment fire',
+                                                    'Outside equipment fire',
+                                                    'Outside rubbish, trash or waste fire',
+                                  'Outside stationary compactor/compacted trash fire',
+                                                    'Overheated motor',
+                                                    'Overpressure rupture of steam boiler',
+                                                    'Passenger vehicle fire',
+                                                    'Power line down',
+                                                    'Rail vehicle fire',
+                                                    'Road freight or transport vehicle fire',
+                                                    'Special outside fire, Other',
+                                                    'Trash or rubbish fire, contained'), ]
+
+
+```
+
+Only some of these represent real emergencies, so let's drop everything that isn't.
+
+
+### Incidents by Time
+
+Let's look at how incidents differ across time of day and day of week (and month and year, once more data is available).
+
+
+```{r, echo=FALSE, warning = FALSE}
 
 data.df$Alarm.Date <- dmy(data.df$Alarm.Date)
 data.df$day <- wday(data.df$Alarm.Date, label=TRUE)
@@ -47,18 +94,24 @@ data.df$hour <- hour(as.POSIXct( data.df$Alarm.Time, format='%H:%M:%S'))
 ggplot(data.df, aes(x=hour)) + geom_bar()
 # find types where the distro differs? small multiples?
 
-ggplot(data.df, aes(x=Property.Description)) + geom_bar() + 
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+#ggplot(data.df, aes(x=Property.Description)) + geom_bar() + 
+#  theme(axis.text.x = element_text(angle = 90, hjust = 1))
 # TODO: drop some of the small ones here
+```
 
+
+### Incidents by Location
+
+
+```{r, echo=FALSE, warning = FALSE}
 
 data.df$full_street <- tolower(paste(data.df$Street.Name, data.df$Street.Type))
 
 sam <- read.csv('Live_Street_Address_Management_SAM_Addresses.csv')
 sam$FULL_STREET_NAME <- tolower(sam$FULL_STREET_NAME)
 
-tmp1 <- sam[146057, ]
-tmp2 <- data.df[1, c('Street.Number', 'full_street')]
+#tmp1 <- sam[146057, ]
+#tmp2 <- data.df[1, c('Street.Number', 'full_street')]
 
 # still getting doubles.... i think it's bc of dupes in the x/y in SAME
 fire.locs <- merge(data.df, unique(sam[ ,c('X' ,'Y', 'STREET_NUMBER', 'FULL_STREET_NAME')]),
@@ -78,21 +131,26 @@ map <- get_map(location = c(min(fire.locs$X), min(fire.locs$Y),
 
 #map <- get_map(location = c(mean(fire.locs$X), mean(fire.locs$Y)), zoom = 12)
 
-ggmap(map)
+#ggmap(map)
 
 ggmap(map) + geom_point(data=fire.locs, aes(x=X, y=Y))
 
-table(fire.locs$Incident.Description)
 
-ggmap(map) + geom_point(data=fire.locs[fire.locs$descr.count>70, ],
-                        aes(x=X, y=Y, color=Incident.Description))
+#ggmap(map) + geom_point(data=fire.locs[fire.locs$descr.count>70, ],
+#                        aes(x=X, y=Y, color=Incident.Description))
 
 
 
 incident.counts <- ddply(data.df, c('Incident.Description'), summarise, count=length(hour))
 
+```
+
+### Incidents by Structure Type
+
+For incidents that occor in structures, we can match the incident via its address to data from the assessor's office to learn details about the structure.  (This is an imperfect matching process currently, but could be refined to give greater confidence beyond the rough sketch here.)
 
 
+```{r, echo = FALSE, warning = FALSE}
 # unique this down somehow - sum the values and areas?
 buildings <- read.csv('property-assessment-fy2017.csv')
 buildings <- buildings[, c('PID', 'ST_NUM', 'ST_NAME', 'ST_NAME_SUF', 'UNIT_NUM', 
@@ -112,20 +170,21 @@ buildings$Street.Number <- gsub('\\s', '\\-', buildings$ST_NUM)
 buildings.fires <- merge(buildings, data.df, by.x=c('Street.Number', 'full_street'),
                          by.y=c('Street.Number', 'full_street'), all.x =TRUE)
 
-length(unique(buildings.fires$Incident.Number))
+#length(unique(buildings.fires$Incident.Number))
 
-head(data.df$Incident.Number %in% unique(buildings.fires$Incident.Number), n=20)
+#head(data.df$Incident.Number %in% unique(buildings.fires$Incident.Number), n=20)
 
 # where did the rest of my fires go?
 # a lot of these fires are at addresses not in the assessment database and i don't know why
 # lots of blanks in the st_num part of the assessment database
 #otoh, are we duplicating a lot? - yes. fires in a multi-unit building get reported all of the units
 
-table(buildings.fires$Incident.Number)
+#table(buildings.fires$Incident.Number)
 
 buildings.fires$fire <- ifelse(is.na(buildings.fires$Incident.Number), FALSE, TRUE)
 
-ggplot(buildings.fires, aes(x=LU, fill=fire)) + geom_bar()
+ggplot(buildings.fires, aes(x=LU, fill=fire)) + geom_bar() + 
+  ggtitle('Incidents by Structure Type')
 
 
 
@@ -137,10 +196,9 @@ buildings.small$Street.Number <- gsub('\\s', '\\-', buildings.small$ST_NUM)
 buildings.fires.small <- merge(buildings.small, data.df, by.x=c('Street.Number', 'full_street'),
                          by.y=c('Street.Number', 'full_street'), all.x =TRUE)
 
-length(unique(buildings.fires.small$Incident.Number))
+#length(unique(buildings.fires.small$Incident.Number))
 
-table(buildings.fires.small$Incident.Number)
-
+#table(buildings.fires.small$Incident.Number)
 # still have a bunch of multiples that shoudl get cleaned out
 
 buildings.fires.small$fire <- ifelse(is.na(buildings.fires.small$Incident.Number), 0, 1)
@@ -149,7 +207,8 @@ building.type.fire <- ddply(buildings.fires.small, c('LU'), summarise, count=len
                             fires=sum(fire))
 building.type.fire$perc <- building.type.fire$fires / building.type.fire$count
 
-ggplot(building.type.fire, aes(x=LU, y=perc)) + geom_bar(stat='identity')
+ggplot(building.type.fire, aes(x=LU, y=perc)) + geom_bar(stat='identity') +
+  ggtitle('Percent of given structure type with incidents')
 
 buildings.fires.small$decade <- 10 * round(buildings.fires.small$YR_BUILT / 10)
 
@@ -159,7 +218,8 @@ building.decade.fire <- ddply(buildings.fires.small, c('decade'), summarise,
 building.decade.fire$perc <- building.decade.fire$fires / building.decade.fire$count
 
 ggplot(building.decade.fire[building.decade.fire$decade!=0, ], 
-       aes(x=decade, y=perc)) + geom_bar(stat='identity')
+       aes(x=decade, y=perc)) + geom_bar(stat='identity') +
+  ggtitle('Percent of stuctures built in given decade with incidents')
 
 
 building.class.fire <- ddply(buildings.fires.small, c('STRUCTURE_CLASS'), summarise,
@@ -168,7 +228,8 @@ building.class.fire <- ddply(buildings.fires.small, c('STRUCTURE_CLASS'), summar
 building.class.fire$perc <- building.class.fire$fires / building.class.fire$count
 
 ggplot(building.class.fire, 
-       aes(x=STRUCTURE_CLASS, y=perc)) + geom_bar(stat='identity')
+       aes(x=STRUCTURE_CLASS, y=perc)) + geom_bar(stat='identity') +
+  ggtitle('Percent of structures with given structure class with incidents')
 
 
 building.cnd.fire <- ddply(buildings.fires.small, c('R_OVRALL_CND'), summarise,
@@ -177,7 +238,8 @@ building.cnd.fire <- ddply(buildings.fires.small, c('R_OVRALL_CND'), summarise,
 building.cnd.fire$perc <- building.cnd.fire$fires / building.cnd.fire$count
 
 ggplot(building.cnd.fire, 
-       aes(x=R_OVRALL_CND, y=perc)) + geom_bar(stat='identity')
+       aes(x=R_OVRALL_CND, y=perc)) + geom_bar(stat='identity') +
+  ggtitle('Percent of structures in given condition with incidents')
 
 
 
@@ -195,17 +257,28 @@ ggplot(building.cnd.fire,
 # if residential - owner occupied
 # should probably do all these plots as raw counts too
 
+
+```
+
+
+### Fires and Code Violations
+
+(Work in Progress)
+
+```{r, echo = FALSE, warning = FALSE}
 # use code enforcement data somehow
 
-code.df <- read.csv('cepviolations.csv')
-code.df <- code.df[ ,c('Status_DTTM', 'Description', 'StNo', 'StHigh', 'Street', 'Suffix')]
+# code.df <- read.csv('cepviolations.csv')
+# code.df <- code.df[ ,c('Status_DTTM', 'Description', 'StNo', 'StHigh', 'Street', 'Suffix')]
+# 
+# code.df$date <- ymd(gsub('\\s.*', '', code.df$Status_DTTM))
+# 
+# 
+# # will need to change this when there's more years of data
+# code.df <- code.df[code.df$date < ymd('2017-03-01') & code.df$date >= ymd('2016-11-01'), ]
 
-code.df$date <- ymd(gsub('\\s.*', '', code.df$Status_DTTM))
 
-code.df <- code.df[code.df$date < ymd('2017-03-01') & code.df$date >= ymd('2016-11-01'), ]
-
-
-table(as.character(code.df$Description))
+#table(as.character(code.df$Description))
 
 # we have baseline fire numbers
 # do properties with any of these violations have higher/lower rates of fire?
