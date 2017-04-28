@@ -12,6 +12,7 @@ library(ggplot2)
 library(lubridate)
 library(ggmap)
 library(plyr)
+library(DT)
 ```
 
 
@@ -19,17 +20,60 @@ library(plyr)
 ```{r, echo=FALSE, warning = FALSE}
 
 
-data.raw <- read_excel('february.2017-fireincidents.xlsx')
+data.feb.2017 <- read_excel('february.2017-fireincidents.xlsx')
+colnames(data.feb.2017) <- gsub('\\s', '.', colnames(data.feb.2017))
+data.feb.2017 <- as.data.frame(data.feb.2017)
+
+
+data.jan.2017 <- read.csv('january.2017-bostonfireincidents-1.csv', stringsAsFactors = FALSE)
+data.2016 <- read.csv('2016-bostonfireincidentopendata-1.csv', stringsAsFactors = FALSE)
+data.2015 <- read.csv('2015-bostonfireincidentopendata.csv', stringsAsFactors = FALSE)
+data.2014 <- read.csv('2014-bostonfireincidentopendata.csv', stringsAsFactors = FALSE)
+data.2013 <- read.csv('2013-bostonfireincidentopendata.csv', stringsAsFactors = FALSE)
+data.2012 <- read.csv('2012-bostonfireincidentopendata.csv', stringsAsFactors = FALSE)
+
 #str(data.raw)
-data.df <- data.raw
-colnames(data.df) <- gsub('\\s', '.', colnames(data.df))
+
+# doing this in two steps since the date formats are different
+data.df <- rbind(data.jan.2017, data.2016, data.2015, data.2014, data.2013, data.2012)
+data.df$Alarm.Date <- mdy(gsub('/', '-', data.df$Alarm.Date))
+
+data.feb.2017$Alarm.Date <- dmy(data.feb.2017$Alarm.Date)
+
+data.df <- rbind(data.feb.2017, data.df)
+
+# these files are getting large
+# let's remove the ones we don't need
+
+rm(data.2012)
+rm(data.2013)
+rm(data.2014)
+rm(data.2015)
+rm(data.2016)
+rm(data.jan.2017)
+rm(data.feb.2017)
+
+
+
+# some columns have extra spaces at the end
+# this makes them hard to work with
+# let's remove them
+
+extra.spaces <- c('Incident.Description', 'Street.Name', 'Street.Type', 'Street.Suffix')
+
+for (col in extra.spaces){
+  data.df[ ,col] <- gsub('\\s+$', '', data.df[ ,col])
+}
+
 
 
 #table(is.na(data.df$Street.Number))
 #table(is.na(data.df$xStreet.Name))
 # so for these 375 you'll need to do address via cross street
 
-table(data.df$Incident.Description)
+#datatable(ddply(data.df, c('Incident.Description'), summarise, count=length(Incident.Number)))
+
+ddply(data.df, c('Incident.Description'), summarise, count=length(Incident.Number))
 
 #ggplot(data.df, aes(x=Incident.Description)) + geom_bar() +
 #  theme(axis.text.x = element_text(angle = 90, hjust = 1))
@@ -78,21 +122,29 @@ Only some of these represent real emergencies, so let's drop everything that isn
 
 ### Incidents by Time
 
-Let's look at how incidents differ across time of day and day of week (and month and year, once more data is available).
+Let's look at how incidents differ across year, month, day of week, and time of day.
 
 
 ```{r, echo=FALSE, warning = FALSE}
+data.df$year <- year(data.df$Alarm.Date)
+ggplot(data.df, aes(x=year)) + geom_bar()
 
-data.df$Alarm.Date <- dmy(data.df$Alarm.Date)
+
+data.df$month <- month(data.df$Alarm.Date)
+ggplot(data.df, aes(x=factor(month))) + geom_bar() + scale_x_discrete(name='month')
+
+
 data.df$day <- wday(data.df$Alarm.Date, label=TRUE)
 
 ggplot(data.df, aes(x=day)) + geom_bar()
 # norm for number of days in month? (but it's feb, so you don't need to)
 
-data.df$hour <- hour(as.POSIXct( data.df$Alarm.Time, format='%H:%M:%S'))
+data.df$hour <- hour(as.POSIXct(data.df$Alarm.Time, format='%H:%M:%S'))
 
 ggplot(data.df, aes(x=hour)) + geom_bar()
 # find types where the distro differs? small multiples?
+
+
 
 #ggplot(data.df, aes(x=Property.Description)) + geom_bar() + 
 #  theme(axis.text.x = element_text(angle = 90, hjust = 1))
@@ -105,7 +157,12 @@ ggplot(data.df, aes(x=hour)) + geom_bar()
 
 ```{r, echo=FALSE, warning = FALSE}
 
-data.df$full_street <- tolower(paste(data.df$Street.Name, data.df$Street.Type))
+data.df$full_street <- tolower(paste(data.df$Street.Name, data.df$Street.Type,
+                                     data.df$Street.Suffix))
+
+data.df$full_street <- gsub('\\sna$', '', data.df$full_street)
+data.df$full_street <- gsub('\\sna\\s', ' ', data.df$full_street)
+data.df$full_street <- gsub('\\s\\s', ' ', data.df$full_street)
 
 sam <- read.csv('Live_Street_Address_Management_SAM_Addresses.csv')
 sam$FULL_STREET_NAME <- tolower(sam$FULL_STREET_NAME)
@@ -119,7 +176,8 @@ fire.locs <- merge(data.df, unique(sam[ ,c('X' ,'Y', 'STREET_NUMBER', 'FULL_STRE
                    by.y=c('STREET_NUMBER', 'FULL_STREET_NAME'))
 
 # so now we're short a few .... is it the ones with xstreets?
-fire.locs <- ddply(fire.locs, colnames(fire.locs)[1:27], head, 1)
+# clear out minor differences in lat/longs
+fire.locs <- ddply(fire.locs, colnames(fire.locs)[1:29], head, 1)
 
 fire.locs <- ddply(fire.locs, c('Incident.Description'), mutate, descr.count=length(X) )
 
@@ -133,7 +191,8 @@ map <- get_map(location = c(min(fire.locs$X), min(fire.locs$Y),
 
 #ggmap(map)
 
-ggmap(map) + geom_point(data=fire.locs, aes(x=X, y=Y))
+# clean this up some to be more readable
+ggmap(map) + geom_point(data=fire.locs, aes(x=X, y=Y, alpha=0.05, shape ='.')) + guides(alpha=FALSE, shape=FALSE)
 
 
 #ggmap(map) + geom_point(data=fire.locs[fire.locs$descr.count>70, ],
@@ -170,25 +229,6 @@ buildings$Street.Number <- gsub('\\s', '\\-', buildings$ST_NUM)
 buildings.fires <- merge(buildings, data.df, by.x=c('Street.Number', 'full_street'),
                          by.y=c('Street.Number', 'full_street'), all.x =TRUE)
 
-#length(unique(buildings.fires$Incident.Number))
-
-#head(data.df$Incident.Number %in% unique(buildings.fires$Incident.Number), n=20)
-
-# where did the rest of my fires go?
-# a lot of these fires are at addresses not in the assessment database and i don't know why
-# lots of blanks in the st_num part of the assessment database
-#otoh, are we duplicating a lot? - yes. fires in a multi-unit building get reported all of the units
-
-#table(buildings.fires$Incident.Number)
-
-buildings.fires$fire <- ifelse(is.na(buildings.fires$Incident.Number), FALSE, TRUE)
-
-ggplot(buildings.fires, aes(x=LU, fill=fire)) + geom_bar() + 
-  ggtitle('Incidents by Structure Type')
-
-
-
-
 buildings.small$full_street <- tolower(paste(buildings.small$ST_NAME,
                                              buildings.small$ST_NAME_SUF)) 
 buildings.small$Street.Number <- gsub('\\s', '\\-', buildings.small$ST_NUM)
@@ -196,7 +236,31 @@ buildings.small$Street.Number <- gsub('\\s', '\\-', buildings.small$ST_NUM)
 buildings.fires.small <- merge(buildings.small, data.df, by.x=c('Street.Number', 'full_street'),
                          by.y=c('Street.Number', 'full_street'), all.x =TRUE)
 
+
+#length(unique(buildings.fires$Incident.Number))
+
+#head(data.df$Incident.Number %in% unique(buildings.fires$Incident.Number), n=20)
+
+# where did the rest of my fires go?
+# a lot of these fires are at addresses not in the assessment database and i don't know why
+# lots of blanks in the st_num part of the assessment database
+# otoh, are we duplicating a lot? - yes. fires in a multi-unit building get reported all of the units
+
+#table(buildings.fires$Incident.Number)
+
+buildings.fires.small$fire <- ifelse(is.na(buildings.fires.small$Incident.Number), FALSE, TRUE)
+
+ggplot(buildings.fires.small, aes(x=LU, fill=fire)) + geom_bar() + 
+  ggtitle('Incidents by Structure Type')
+
+
+
+
+
 #length(unique(buildings.fires.small$Incident.Number))
+
+incident.overcounts <- ddply(buildings.fires.small, c('Incident.Number'),
+                             summarise, count=length('full_street'))
 
 #table(buildings.fires.small$Incident.Number)
 # still have a bunch of multiples that shoudl get cleaned out
